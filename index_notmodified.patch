@@ -1,0 +1,43 @@
+Index: apache-nutch-1.3/src/java/org/apache/nutch/indexer/IndexerMapReduce.java
+===================================================================
+--- apache-nutch-1.3.orig/src/java/org/apache/nutch/indexer/IndexerMapReduce.java
++++ apache-nutch-1.3/src/java/org/apache/nutch/indexer/IndexerMapReduce.java
+@@ -52,12 +52,16 @@ implements Mapper<Text, Writable, Text,
+           Reducer<Text, NutchWritable, Text, NutchDocument> {
+ 
+   public static final Log LOG = LogFactory.getLog(IndexerMapReduce.class);
++  public static final String INDEX_NOTMODIFIED = "indexer.indexnotmodified";
++  private boolean indexNotModified = false;
+ 
+   private IndexingFilters filters;
+   private ScoringFilters scfilters;
+ 
+   public void configure(JobConf job) {
+     setConf(job);
++    indexNotModified = job.getBoolean(INDEX_NOTMODIFIED, false);
++    LOG.info("Indexing unmodified links: " + indexNotModified);
+     this.filters = new IndexingFilters(getConf());
+     this.scfilters = new ScoringFilters(getConf());
+   }
+@@ -85,7 +89,8 @@ implements Mapper<Text, Writable, Text,
+           dbDatum = datum;
+         else if (CrawlDatum.hasFetchStatus(datum)) {
+           // don't index unmodified (empty) pages
+-          if (datum.getStatus() != CrawlDatum.STATUS_FETCH_NOTMODIFIED)
++          if (indexNotModified ||
++		(datum.getStatus() != CrawlDatum.STATUS_FETCH_NOTMODIFIED))
+             fetchDatum = datum;
+         } else if (CrawlDatum.STATUS_LINKED == datum.getStatus() ||
+                    CrawlDatum.STATUS_SIGNATURE == datum.getStatus() ||
+@@ -108,8 +113,9 @@ implements Mapper<Text, Writable, Text,
+       return;                                     // only have inlinks
+     }
+ 
+-    if (!parseData.getStatus().isSuccess() ||
+-        fetchDatum.getStatus() != CrawlDatum.STATUS_FETCH_SUCCESS) {
++    if (!parseData.getStatus().isSuccess()) return;
++    if (fetchDatum.getStatus() != CrawlDatum.STATUS_FETCH_SUCCESS &&
++	 fetchDatum.getStatus() != CrawlDatum.STATUS_FETCH_NOTMODIFIED) {
+       return;
+     }
+ 

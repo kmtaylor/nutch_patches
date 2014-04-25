@@ -1,0 +1,206 @@
+Index: apache-nutch-1.3/src/plugin/build.xml
+===================================================================
+--- apache-nutch-1.3.orig/src/plugin/build.xml
++++ apache-nutch-1.3/src/plugin/build.xml
+@@ -39,6 +39,7 @@
+      <ant dir="microformats-reltag" target="deploy"/>
+      <ant dir="nutch-extensionpoints" target="deploy"/>
+      <ant dir="protocol-file" target="deploy"/>
++     <ant dir="protocol-smb" target="deploy"/>
+      <ant dir="protocol-ftp" target="deploy"/>
+      <ant dir="protocol-http" target="deploy"/>
+      <ant dir="protocol-httpclient" target="deploy"/>
+Index: apache-nutch-1.3/src/plugin/protocol-smb/ivy.xml
+===================================================================
+--- /dev/null
++++ apache-nutch-1.3/src/plugin/protocol-smb/ivy.xml
+@@ -0,0 +1,41 @@
++<?xml version="1.0" ?>
++
++<!--
++   Licensed to the Apache Software Foundation (ASF) under one or more
++   contributor license agreements.  See the NOTICE file distributed with
++   this work for additional information regarding copyright ownership.
++   The ASF licenses this file to You under the Apache License, Version 2.0
++   (the "License"); you may not use this file except in compliance with
++   the License.  You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
++-->
++
++<ivy-module version="1.0">
++  <info organisation="org.apache.nutch" module="${ant.project.name}">
++    <license name="Apache 2.0"/>
++    <ivyauthor name="Apache Nutch Team" url="http://nutch.apache.org"/>
++    <description>
++        Apache Nutch
++    </description>
++  </info>
++
++  <configurations>
++    <include file="${nutch.root}/ivy/ivy-configurations.xml"/>
++  </configurations>
++
++  <publications>
++    <!--get the artifact from our module name-->
++    <artifact conf="master"/>
++  </publications>
++
++  <dependencies>
++  </dependencies>
++  
++</ivy-module>
+Index: apache-nutch-1.3/src/plugin/protocol-smb/src/java/org/apache/nutch/protocol/smb/SMB.java
+===================================================================
+--- apache-nutch-1.3.orig/src/plugin/protocol-smb/src/java/org/apache/nutch/protocol/smb/SMB.java
++++ apache-nutch-1.3/src/plugin/protocol-smb/src/java/org/apache/nutch/protocol/smb/SMB.java
+@@ -38,6 +38,10 @@ public class SMB implements Protocol {
+     int maxContentLength;
+     HttpDateFormat httpDateFormat = null;
+     private Configuration conf;
++
++    protected boolean check_modified;
++    protected boolean double_file_interval;
++    protected int doubleDefaultInterval;
+     
+     static {
+         setJCifsProp("smb.properties");
+@@ -67,6 +71,12 @@ public class SMB implements Protocol {
+                 
+                 if (code == 200){
+                     return new ProtocolOutput(response.toContent());
++		} else if (code == 304) {
++		    return new ProtocolOutput(response.toContent(),
++			    new ProtocolStatus(ProtocolStatus.NOTMODIFIED));
++		} else if (code == 404) {
++		    return new ProtocolOutput(response.toContent(),
++			    new ProtocolStatus(ProtocolStatus.NOTFOUND));
+                 } else if (code >= 300 && code < 400){
+                     if(redirects == MAX_REDIRECTS)
+                         throw new SMBException("too many redirects: "+url);
+@@ -91,6 +101,11 @@ public class SMB implements Protocol {
+      */
+     public void setConf(Configuration conf) {
+         this.conf = conf;
++	this.check_modified = conf.getBoolean("smb.check.modified", true);
++	this.double_file_interval =
++		conf.getBoolean("smb.double.file.interval", false);
++	this.doubleDefaultInterval =
++		conf.getInt("db.fetch.interval.default", 0) * 2;
+     }
+ 
+     /**
+Index: apache-nutch-1.3/src/plugin/protocol-smb/src/java/org/apache/nutch/protocol/smb/SMBResponse.java
+===================================================================
+--- apache-nutch-1.3.orig/src/plugin/protocol-smb/src/java/org/apache/nutch/protocol/smb/SMBResponse.java
++++ apache-nutch-1.3/src/plugin/protocol-smb/src/java/org/apache/nutch/protocol/smb/SMBResponse.java
+@@ -41,6 +41,7 @@ public class SMBResponse {
+     private byte[] content;
+     private int code;
+     private Metadata headers = new Metadata();
++    private static final byte[] EMPTY_CONTENT = new byte[0];
+     
+     private final SMB protocol;
+     private Configuration conf;
+@@ -65,6 +66,7 @@ public class SMBResponse {
+         safeUrlChars.set('_');
+         safeUrlChars.set('.');
+         safeUrlChars.set('*');
++        safeUrlChars.set('/');
+     }
+ 
+     public static final Log LOG = LogFactory.getLog(SMB.class);
+@@ -77,9 +79,11 @@ public class SMBResponse {
+             throws DecoderException, SMBException, IOException, UnsupportedEncodingException  {
+         String urlString = url.toString();
+         String decodedUrlString = new String(URLCodec.decodeUrl(urlString.getBytes("UTF-8")), "UTF-8");
++	//System.out.println("SMB - Requested URL = " + urlString);
++	//System.out.println("SMB - Samba URL = " + decodedUrlString);
+         url = new URL(decodedUrlString);
+-        this.orig = decodedUrlString;
+-        this.base = decodedUrlString;
++        this.orig = urlString;
++        this.base = urlString;
+         this.protocol = protocol;
+         this.conf = conf;
+         
+@@ -118,11 +122,31 @@ public class SMBResponse {
+                 return;
+             }
+             
++	    //System.out.println("SMB: datum.getModifiedTime() = " +
++            //                   datum.getModifiedTime());
++            //System.out.println("SMB: datum.getFetchTime() =    " +
++            //    this.protocol.httpDateFormat.toString(datum.getFetchTime()));
++            //System.out.println("SMB: f.lastModified() =        " +
++            //                   f.lastModified());
++	    //System.out.println("SMB - check_modified = " +
++	    //		    this.protocol.check_modified);
++
++	    if ( this.protocol.check_modified && 
++		    f.lastModified() <= datum.getModifiedTime()) {
++                this.code = 304;
++            	this.headers.set(Response.LAST_MODIFIED,
++                    this.protocol.httpDateFormat.toString(f.lastModified()));
++                return;
++            }
++	    datum.setModifiedTime(f.lastModified());
++
+             if (f.isDirectory()){
+                 LOG.info("Reading content of SMB directory: "+f.getName());
+                 getDirAsHttpResponse(f);
+             } else if (f.isFile()){
+                 LOG.info("Reading content of SMB file: "+f.getName());
++		if (this.protocol.double_file_interval)
++		    datum.setFetchInterval(this.protocol.doubleDefaultInterval);
+                 getFileAsHttpResponse(f);
+             } else {
+                 LOG.warn("Internal Server error occured for file: "+f.getName());
+@@ -160,7 +184,8 @@ public class SMBResponse {
+      * @return Content - the new content based on URL
+      */
+     public Content toContent() {
+-        return new Content(orig, base, content,
++        return new Content(orig, base,
++		content == null ? EMPTY_CONTENT : content,
+                 getHeader(Response.CONTENT_TYPE),
+                 headers, this.conf);
+     }
+@@ -183,7 +208,8 @@ public class SMBResponse {
+         // set headers
+         headers.set(Response.CONTENT_TYPE, "text/html");
+         headers.set(Response.CONTENT_LENGTH, new Integer(this.content.length).toString());
+-        headers.set(Response.LAST_MODIFIED, new Long(f.lastModified()).toString());
++        headers.set(Response.LAST_MODIFIED,
++                    this.protocol.httpDateFormat.toString(f.lastModified()));
+         
+         // response code
+         this.code =  200;  // http OK
+@@ -218,8 +244,9 @@ public class SMBResponse {
+         
+         // set headers
+         headers.set(Response.CONTENT_LENGTH, new Long(size).toString());
+-        headers.set(Response.LAST_MODIFIED, String.valueOf(f.lastModified()));
+         headers.set(Response.CONTENT_TYPE, "");
++        this.headers.set(Response.LAST_MODIFIED,
++                    this.protocol.httpDateFormat.toString(f.lastModified()));
+         
+         // response code
+         this.code = 200; // http OK
+@@ -258,6 +285,10 @@ public class SMBResponse {
+             String htmlName = StringEscapeUtils.escapeHtml(name);
+             String urlName = new String(URLCodec.encodeUrl(safeUrlChars, name.getBytes("UTF-8")), "US-ASCII");
+             String time = String.valueOf(f.lastModified());
++	    //System.out.println("SMB - name = " + name);
++	    //System.out.println("SMB - htmlName = " + htmlName);
++	    //System.out.println("SMB - urlName = " + urlName);
++	    //System.out.println("SMB - htmlPath = " + htmlPath);
+             if (f.isDirectory() || f.isFile()) {
+                 x.append("<a href=\"" + urlName + "\">" + htmlName + "</a>\t");
+                 x.append(time+"\t-\n");

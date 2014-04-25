@@ -1,0 +1,21 @@
+Index: apache-nutch-1.3/src/bin/nutch
+===================================================================
+--- apache-nutch-1.3.orig/src/bin/nutch
++++ apache-nutch-1.3/src/bin/nutch
+@@ -186,6 +186,7 @@ fi
+ 
+ NUTCH_OPTS="$NUTCH_OPTS -Dhadoop.log.dir=$NUTCH_LOG_DIR"
+ NUTCH_OPTS="$NUTCH_OPTS -Dhadoop.log.file=$NUTCH_LOGFILE"
++NUTCH_OPTS="$NUTCH_OPTS -Djava.protocol.handler.pkgs=jcifs"
+ 
+ if [ "x$JAVA_LIBRARY_PATH" != "x" ]; then
+   NUTCH_OPTS="$NUTCH_OPTS -Djava.library.path=$JAVA_LIBRARY_PATH"
+@@ -238,7 +239,7 @@ fi
+ EXEC_CALL="$HADOOP_HOME/bin/hadoop jar $NUTCH_JOB"
+ 
+ if $local; then
+- EXEC_CALL="$JAVA $JAVA_HEAP_MAX $NUTCH_OPTS -classpath $CLASSPATH"
++  exec "$JAVA" $JAVA_HEAP_MAX $NUTCH_OPTS -classpath "$CLASSPATH" $CLASS "$@"
+ else
+  # check that we are really in a hadoop config
+  if [ ! -f ${HADOOP_HOME}/bin/hadoop ]; then

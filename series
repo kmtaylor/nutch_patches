@@ -1,0 +1,8 @@
+fetcher_parse.patch
+new_links.patch
+index_notmodified.patch
+force_refetch.patch
+file_notmodified.patch
+http_curl.patch
+smb_notmodified.patch
+smb_nutch_script.patch

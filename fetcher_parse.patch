@@ -1,0 +1,41 @@
+Index: apache-nutch-1.3/src/java/org/apache/nutch/fetcher/Fetcher.java
+===================================================================
+--- apache-nutch-1.3.orig/src/java/org/apache/nutch/fetcher/Fetcher.java
++++ apache-nutch-1.3/src/java/org/apache/nutch/fetcher/Fetcher.java
+@@ -1062,7 +1062,7 @@ public class Fetcher extends Configured
+     
+   }
+ 
+-  public void fetch(Path segment, int threads, boolean parsing)
++  public void fetch(Path segment, int threads)
+     throws IOException {
+ 
+     checkConfiguration();
+@@ -1089,7 +1089,7 @@ public class Fetcher extends Configured
+ 
+     job.setInt("fetcher.threads.fetch", threads);
+     job.set(Nutch.SEGMENT_NAME_KEY, segment.getName());
+-    job.setBoolean("fetcher.parse", parsing);
++    //job.setBoolean("fetcher.parse", parsing);
+ 
+     // for politeness, don't permit parallel execution of a single task
+     job.setSpeculativeExecution(false);
+@@ -1134,15 +1134,15 @@ public class Fetcher extends Configured
+     for (int i = 1; i < args.length; i++) {       // parse command line
+       if (args[i].equals("-threads")) {           // found -threads option
+         threads =  Integer.parseInt(args[++i]);
+-      } else if (args[i].equals("-noParsing")) parsing = false;
++      } else if (args[i].equals("-Parsing")) parsing = true;
+     }
+ 
+     getConf().setInt("fetcher.threads.fetch", threads);
+-    if (!parsing) {
++    if (parsing) {
+       getConf().setBoolean("fetcher.parse", parsing);
+     }
+     try {
+-      fetch(segment, threads, parsing);
++      fetch(segment, threads);
+       return 0;
+     } catch (Exception e) {
+       LOG.fatal("Fetcher: " + StringUtils.stringifyException(e));
